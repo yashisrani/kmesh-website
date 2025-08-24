@@ -1,0 +1,74 @@
+name: Version Docusaurus Docs
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  version-docs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: main  # Check out main branch directly
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "yarn"
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile --ignore-scripts --no-lockfile-write
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=$(echo "${{ github.ref }}" | sed 's|refs/tags/v||')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create versioned docs
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          echo "Creating version $VERSION from /docs"
+          yarn run docusaurus docs:version $VERSION
+          if [ ! -d "versioned_docs/version-$VERSION" ]; then
+            echo "Error: Versioned docs not created for version $VERSION"
+            exit 1
+          fi
+
+      - name: Organize versioned docs
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          # Ensure the versioned docs directory exists
+          mkdir -p versioned_docs/version-$VERSION
+          # Move contents if created in a temp directory
+          if [ -d "versioned_docs/version-$VERSION-temp" ]; then
+            mv versioned_docs/version-$VERSION-temp/* versioned_docs/version-$VERSION/
+            rmdir versioned_docs/version-$VERSION-temp
+          fi
+          # Handle sidebars
+          mkdir -p versioned_sidebars
+          if [ -f "versioned_sidebars/version-$VERSION-sidebars.json" ]; then
+            echo "Sidebar already in place"
+          elif [ -f "versioned_sidebars/version-$VERSION-sidebars-temp.json" ]; then
+            mv versioned_sidebars/version-$VERSION-sidebars-temp.json versioned_sidebars/version-$VERSION-sidebars.json
+          fi
+          if [ ! -f "versions.json" ]; then
+            echo "Error: versions.json not found"
+            exit 1
+          fi
+
+      - name: Commit and push to main branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add versioned_docs/ versioned_sidebars/ versions.json
+          git commit -m "docs: version ${{ steps.version.outputs.version }}" || echo "No changes to commit"
+          git push origin main
